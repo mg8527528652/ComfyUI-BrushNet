@@ -16,6 +16,8 @@ from .brushnet.brushnet import BrushNetModel
 from .brushnet.brushnet_ca import BrushNetModel as PowerPaintModel
 
 from .brushnet.powerpaint_utils import TokenizerWrapper, add_tokens
+from nodes import NODE_CLASS_MAPPINGS
+import kornia
 
 current_directory = os.path.dirname(os.path.abspath(__file__))
 brushnet_config_file = os.path.join(current_directory, 'brushnet', 'brushnet.json')
@@ -49,6 +51,8 @@ class BrushNetLoader:
     FUNCTION = "brushnet_loading"
 
     def brushnet_loading(self, brushnet, dtype):
+        self.inpaint_files = get_files_with_extension('inpaint')
+        
         brushnet_file = os.path.join(self.inpaint_files[brushnet], brushnet)
         is_SDXL = False
         is_PP = False
@@ -673,13 +677,41 @@ def prepare_image(image, mask):
 
     if mask.shape[2] != image.shape[2] or mask.shape[1] != image.shape[1]:
         raise Exception("Image and mask should be the same size")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # binarize mask
+    mask = (mask > 0.5).float()
+    clean_mask = mask
+    # # As a suggestion of inferno46n2 (https://github.com/nullquant/ComfyUI-BrushNet/issues/64)
+    # # Kernel operations for edge detection
+    max_res = max(image.shape[2], image.shape[3])
+    # kernel_size = max(3, (max_res // 400) | 1)  # Ensure it's odd
+    kernel_size =  (max_res // 400) | 1 # Ensure it's odd
+    # Create 2D kernel for morphological operations
     
-    # As a suggestion of inferno46n2 (https://github.com/nullquant/ComfyUI-BrushNet/issues/64)
-    mask = mask.round()
+    kernel = torch.ones((kernel_size, kernel_size), device=device)
 
-    masked_image = image * (1.0 - mask[:,:,:,None])
+    # Add batch dimension for Kornia operations if missing
+    mask_4d = mask[None,None,:,:] if len(mask.shape) == 2 else mask[:,None,:,:]
+    mask_4d = mask_4d.to(device=device)
+    # Perform erosion and dilation on the GPU using Kornia
+    # eroded_mask = kornia.morphology.erosion(mask_4d, kernel)
+    dilated_mask = torch.clamp(kornia.morphology.dilation(mask_4d, kernel), 0, 1)
+    # dilated_mask = kornia.morphology.dilation(dilated_mask, kernel)
+    # dilated_mask = kornia.morphology.dilation(mask_4d, kernel)
+    # edge_mask = torch.clamp(dilated_mask - eroded_mask, 0, 1)
+    # Remove extra dimensions to match original mask shape
+    if len(mask.shape) == 2:
+        dilated_mask = dilated_mask[0,0]
+    else:
+        dilated_mask = dilated_mask[:,0]
+        
+    # Make all pixels which are 1 in edge mask, 1 in mask too
+    clean_mask = mask.clone()
+    clean_mask[dilated_mask == 1] = 1
+    # #
+    masked_image = image * (1.0 - clean_mask[:,:,:,None])
 
-    return (masked_image, mask)
+    return (masked_image, clean_mask)
 
 
 # Get origin of the mask
