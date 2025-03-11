@@ -684,8 +684,8 @@ def prepare_image(image, mask):
     # # As a suggestion of inferno46n2 (https://github.com/nullquant/ComfyUI-BrushNet/issues/64)
     # # Kernel operations for edge detection
     max_res = max(image.shape[2], image.shape[3])
-    # kernel_size = max(3, (max_res // 400) | 1)  # Ensure it's odd
-    kernel_size =  (max_res // 400) | 1 # Ensure it's odd
+    kernel_size = max(3, (max_res // 400) | 1)  # Ensure it's odd
+    # kernel_size =  (max_res // 400) | 1 # Ensure it's odd
     # Create 2D kernel for morphological operations
     
     kernel = torch.ones((kernel_size, kernel_size), device=device)
